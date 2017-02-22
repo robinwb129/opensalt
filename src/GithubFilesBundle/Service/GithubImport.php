@@ -108,44 +108,50 @@ class GithubImport
         for ($i = 1, $iMax = count($content); $i < $iMax; ++$i) {
             $row = $content[$i];
             $lsItem = $this->parseCSVGithubStandard($lsDoc, $lsItemKeys, $row, false);
-            if( strlen($lsItemKeys['groupBy']) > 0 ){
+            if( strlen(trim($lsItemKeys['groupBy'])) > 0 ){
                 $groupBy = $this->getValue($lsItemKeys['groupBy'], $row);
-                if( $groupBy == $lastGroupBy ){
+                if( $groupBy === $lastGroupBy && strlen(trim($groupBy)) > 0 ){
                     $listGroupBy[$groupBy]->addChild($lsItem);
                 }else{
-                    if (array_key_exists($groupBy, $listGroupBy) ){
-                        $listGroupBy[$groupBy]->addChild($lsItem);
+                    if( strlen(trim($groupBy)) > 0 ){
+                        if (array_key_exists($groupBy, $listGroupBy) ){
+                            $listGroupBy[$groupBy]->addChild($lsItem);
+                        }else{
+                            $lsItem = $this->parseCSVGithubStandard($lsDoc, $lsItemKeys, $row, true);
+                            $listGroupBy[$groupBy] = $lsItem;
+                            $lsDoc->addTopLsItem($lsItem);
+                        }
                     }else{
-                        $listGroupBy[$groupBy] = $lsItem;
                         $lsDoc->addTopLsItem($lsItem);
                     }
                 }
                 $lastGroupBy = $groupBy;
             }else{
-                if( array_key_exists($row['P2 Label'], $groups) ){
-                    if( array_key_exists($row['P3 Label'], $groups[$row['P2 Label']]) ){
-                        if( array_key_exists($row['P4 Label'], $groups[$row['P2 Label']][$row['P3 Label']]) ){
-                            if( array_key_exists($row['P5 Label'], $groups[$row['P2 Label']][$row['P3 Label']][$row['P4 Label']]) ){
-                                if( array_key_exists($row['P6 Label'], $groups[$row['P2 Label']][$row['P3 Label']][$row['P4 Label']][$row['P5 Label']]) ){
-                                    $groups[$row['P2 Label']][$row['P3 Label']][$row['P4 Label']][$row['P5 Label']][$row['P6 Label']]['instance__']->addChild($lsItem);
-                                }else{
-                                    $groups[$row['P2 Label']][$row['P3 Label']][$row['P4 Label']][$row['P5 Label']][$row['P6 Label']]['instance__'] = $lsItem;
-                                    $groups[$row['P2 Label']][$row['P3 Label']][$row['P4 Label']][$row['P5 Label']]['instance__']->addChild($lsItem);
-                                }
+                if( array_key_exists($row['P3 Label'], $groups) ){
+                    if( array_key_exists($row['P4 Label'], $groups[$row['P3 Label']]) ){
+                        if( array_key_exists($row['P5 Label'], $groups[$row['P3 Label']][$row['P4 Label']]) ){
+                            if( array_key_exists($row['P6 Label'], $groups[$row['P3 Label']][$row['P4 Label']][$row['P5 Label']]) ){
+                                $groups[$row['P3 Label']][$row['P4 Label']][$row['P5 Label']][$row['P6 Label']]['instance__']->addChild($lsItem);
                             }else{
-                                $groups[$row['P2 Label']][$row['P3 Label']][$row['P4 Label']][$row['P5 Label']]['instance__'] = $lsItem;
-                                $groups[$row['P2 Label']][$row['P3 Label']][$row['P4 Label']]['instance__']->addChild($lsItem);
+                                $groups[$row['P3 Label']][$row['P4 Label']][$row['P5 Label']][$row['P6 Label']]['instance__'] = $lsItem;
+                                $groups[$row['P3 Label']][$row['P4 Label']][$row['P5 Label']]['instance__']->addChild($lsItem);
                             }
                         }else{
-                            $groups[$row['P2 Label']][$row['P3 Label']][$row['P4 Label']]['instance__'] = $lsItem;
-                            $groups[$row['P2 Label']][$row['P3 Label']]['instance__']->addChild($lsItem);
+                            $groups[$row['P3 Label']][$row['P4 Label']][$row['P5 Label']]['instance__'] = $lsItem;
+                            $groups[$row['P3 Label']][$row['P4 Label']]['instance__']->addChild($lsItem);
                         }
                     }else{
-                        $groups[$row['P2 Label']][$row['P3 Label']]['instance__'] = $lsItem;
-                        $groups[$row['P2 Label']]['instance__']->addChild($lsItem);
+                        if( strlen(trim($row['P4 Label'])) > 0 ){
+                            $groups[$row['P3 Label']][$row['P4 Label']]['instance__'] = $lsItem;
+                            if( strlen(trim($row['P3 Label'])) > 0){
+                                $groups[$row['P3 Label']]['instance__']->addChild($lsItem);
+                            }
+                        }
                     }
                 }else{
-                    $groups[$row['P2 Label']]['instance__'] = $lsItem;
+                    if( strlen(trim($row['P3 Label'])) > 0 ){
+                        $groups[$row['P3 Label']]['instance__'] = $lsItem;
+                    }
                     $lsDoc->addTopLsItem($lsItem);
                 }
             }
@@ -165,10 +171,17 @@ class GithubImport
     {
         $lsItem = new LsItem();
         $em = $this->getEntityManager();
+        $fullStatement = $this->getValue($lsItemKeys['fullStatement'], $data);
+        $humanCodingScheme = $this->getValue($lsItemKeys['humanCodingScheme'], $data);
+
+        if( $isTop ){
+            $fullStatement = $this->getValue($lsItemKeys['groupBy'], $data);
+            $humanCodingScheme = null;
+        }
 
         $lsItem->setLsDoc($lsDoc);
-        $lsItem->setFullStatement($this->getValue($lsItemKeys['fullStatement'], $data));
-        $lsItem->setHumanCodingScheme($this->getValue($lsItemKeys['humanCodingScheme'], $data));
+        $lsItem->setFullStatement($fullStatement);
+        $lsItem->setHumanCodingScheme($humanCodingScheme);
         $lsItem->setAbbreviatedStatement($this->getValue($lsItemKeys['abbreviatedStatement'], $data));
         $lsItem->setListEnumInSource($this->getValue($lsItemKeys['listEnumeration'], $data));
         $lsItem->setConceptKeywords($this->getValue($lsItemKeys['conceptKeywords'], $data));
