@@ -1,6 +1,76 @@
 //////////////////////////////////////////////////////
-// SET UP APP OBJECT
+// INITIALIZATION
 window.app = window.app||{};
+app.initialize = function() {
+    // render the document tree
+    app.renderTree1();
+    
+    // prepare modals
+    app.prepareEditDocModal();
+    app.prepareEditItemModal();
+    app.prepareAssociateModal();
+    app.prepareExemplarModal();
+    app.prepareAddNewChildModal();
+    app.prepareAddAssocGroupModal();
+    // initialize popovers on export modal
+    $('#exportModal [data-toggle="popover"]').popover();
+    // "Copy from another CF Package" button
+    $("[data-target=copyItem]").on('click', app.copyItemInitiate);
+    // When user selects a document from the document list, load tree2
+    // PW: not sure if we actually need a button here; does the menu always load with a blank item listed first??
+    // $("#loadTree2Btn").on('click', app.tree2Selected);
+    $("#ls_doc_list_lsDoc").on('change', app.tree2Selected);
+    
+    // right-side buttongroup
+    $("#rightSideItemDetailsBtn").on('click', function() { app.tree2Toggle(false); });
+    $("#rightSideCopyItemsBtn").on('click', function() { app.copyItemInitiate(); });
+    $("#rightSideCreateAssociationsBtn").on('click', function() { app.addAssociation(); });
+
+    // Tree checkboxes
+    $(".treeCheckboxControlBtn").on('click', function(e) { app.treeCheckboxToggleAll($(this)); e.stopPropagation(); });
+    $(".treeCheckboxMenuItem").on('click', function() { app.treeCheckboxMenuItemSelected($(this)); });
+    
+    // tree2 change tree buttons
+    $(".changeTree2DocumentBtn").on('click', function() { app.changeTree2() });
+    
+    // Prepare filters
+    app.filterOnTrees();
+
+    // initialize association groups
+    app.initializeAssocGroups();
+    
+    // if we got an initialLsItemId, activate it (and expand it)
+    if (app.initialLsItemId != null) {
+        var key = app.keyFromLsItemId(app.initialLsItemId, app.initialAssocGroup);
+        // check to see if this key is valid
+        if (app.ft.fancytree("getTree").getNodeByKey(key) == null) {
+            // if not valid, look for the item in other assocGroups
+            var foundAssocGroup = false;
+            for (var assocGroup in app.allAssocGroups) {
+                key = app.keyFromLsItemId(app.initialLsItemId, assocGroup);
+                // if we find it...
+                if (app.ft.fancytree("getTree").getNodeByKey(key) != null) {
+                    // set selectedAssocGroup and break
+                    app.selectedAssocGroup = assocGroup;
+                    foundAssocGroup = true;
+                    break;
+                }
+            }
+            // if we didn't find a valid key, alert the user (but this shouldn't happen)
+            if (!foundAssocGroup) {
+                alert("An item with id " + app.initialLsItemId + " could not be found.");
+                key = null;
+            }
+        }
+        if (key != null) {
+            app.ft.fancytree("getTree").activateKey(key).setExpanded(true);
+        }
+    }
+
+    // show itemSection to reveal either the document or item details
+    $("#itemSection").show();
+};
+
 //////////////////////////////////////////////////////
 // SPINNER
 app.spinnerHtml = function(msg) {
@@ -21,17 +91,49 @@ app.hideModalSpinner = function() {
 
 // set onpopstate event to restore state when user clicks the browser back/forward button
 window.onpopstate = function(event) {
-    var key = event.state;
     // set popStateActivate so we don't re-push this history state
     app.popStateActivate = true;
-    app.ft.fancytree("getTree").activateKey(key);
+    
+    var lsItemId, assocGroup;
+    // if event.state is null, we're back to the initial values...
+    if (event.state == null) {
+        lsItemId = app.initialLsItemId;
+        assocGroup = app.initialAssocGroup;
+    } else {
+        lsItemId = event.state.lsItemId;
+        assocGroup = event.state.assocGroup;
+    }
+    
+    // restore assocGroup if necessary
+    if (assocGroup != app.selectedAssocGroup) {
+        app.selectedAssocGroup = assocGroup;
+        app.processAssocGroups("tree1");
+    }
+    
+    app.ft.fancytree("getTree").activateKey(app.keyFromLsItemId(lsItemId, assocGroup));
 };
 
 // Function to update the history state; called when a tree node is activated
-app.pushHistoryState = function(key, path) {
+app.pushHistoryState = function(lsItemId, assocGroup) {
     // if we just called this after the user clicked back or forward, though, don't push a new state
     if (app.popStateActivate != true) {
-        window.history.pushState(key, "Competency Framework", path);
+        var path;
+        if (lsItemId == null) {
+            path = app.path.lsDoc.replace('ID', app.lsDocId);
+        } else {
+            path = app.path.lsItem.replace('ID', lsItemId);
+        }
+    
+        var state = {
+            "lsItemId": lsItemId,
+            "assocGroup": assocGroup
+        };
+        // add assocGroup to path if necessary
+        if (assocGroup != null && assocGroup != "default") {
+            path += "/" + assocGroup;
+        }
+        
+        window.history.pushState(state, "Competency Framework", path);
     }
     // clear popStateActivate
     app.popStateActivate = false;
@@ -142,10 +244,10 @@ app.processTree = function(tree, isTopNode) {
 
     // if tree has any children
     if (tree.children != null && tree.children.length > 0) {
-        // sort children by listEnum
+        // sort children by sequenceNumber
         tree.children.sort(function(a,b) {
-            var leA = a.listEnum * 1;
-            var leB = b.listEnum * 1;
+            var leA = a.sequenceNumber * 1;
+            var leB = b.sequenceNumber * 1;
             if (isNaN(leA)) leA = 100000;
             if (isNaN(leB)) leB = 100000;
             return leA - leB;
@@ -340,26 +442,6 @@ app.renderTree1 = function() {
     });
 };
 
-app.initializeControls = function() {
-    // right-side buttongroup
-    $("#rightSideItemDetailsBtn").on('click', function() { app.tree2Toggle(false); });
-    $("#rightSideCopyItemsBtn").on('click', function() { app.copyItemInitiate(); });
-    $("#rightSideCreateAssociationsBtn").on('click', function() { app.addAssociation(); });
-
-    // Tree checkboxes
-    $(".treeCheckboxControlBtn").on('click', function(e) { app.treeCheckboxToggleAll($(this)); e.stopPropagation(); });
-    $(".treeCheckboxMenuItem").on('click', function() { app.treeCheckboxMenuItemSelected($(this)); });
-    
-    // tree2 change tree button
-    $("#changeTree2DocumentBtn").on('click', function() { app.changeTree2() });
-    
-    // Prepare filters
-    app.filterOnTrees();
-    
-    // Prepare association group manager
-    app.initializeAssocGroupManager();
-};
-
 app.getTreeFromInput = function($jq) {
     return $("#" + $jq.closest(".treeSide").find(".treeDiv").attr("id"));
 };
@@ -402,6 +484,8 @@ app.treeCheckboxToggleAll = function($input, val) {
     // if this is the first click for this tree, enable checkboxes on the tree
     if ($cb.data("checkboxesEnabled") != "true") {
         app.treeCheckboxToggleCheckboxes($tree, true);
+        // then call processAssocGroups to re-hide things appropriately by group
+        app.processAssocGroups($tree.attr("id"));
     
     // else toggle select all
     } else {
@@ -415,7 +499,8 @@ app.treeCheckboxToggleAll = function($input, val) {
         }
         
         $tree.fancytree("getTree").visit(function(node) {
-            if (node.unselectable != true) {
+            // if the node isn't unselectable and it's association group is showing
+            if (node.unselectable != true && node.data.assocGroupShowing == true) {
                 // if either (we're not filtering) or (the node matches the filter) or (val is false),
                 if (searchEntered == false || node.match == true || val == false) {
                     // set selected to val
@@ -433,7 +518,7 @@ app.treeCheckboxMenuItemSelected = function($menu) {
     var itemIds = [];
     $tree.fancytree("getTree").visit(function(node) {
         if (node.selected == true && node.unselectable != true) {
-            itemIds.push(node.key);
+            itemIds.push(app.lsItemIdFromKey(node.key));
         }
     });
     
@@ -494,6 +579,10 @@ app.tree2Selected = function() {
         // and hide tree2SelectorDiv
         $("#tree2SelectorDiv").hide();
 
+        // process association groups for tree2
+        app.selectedAssocGroupTree2 = null;
+        app.processAssocGroups('tree2');
+
     }).fail(function(jqXHR, textStatus, errorThrown){
         $('#viewmode_tree2').html("ERROR:" + jqXHR.responseText);
         $('#ls_doc_list_lsDoc').val("");
@@ -501,15 +590,21 @@ app.tree2Selected = function() {
 };
 
 app.changeTree2 = function() {
-    // clear viewmode_tree2 and hide tree2SectionControls
+    // clear viewmode_tree2 and hide tree2SectionControls and assocGroupFilter
     $("#viewmode_tree2").html("");
     $("#tree2SectionControls").hide();
+    $("#treeSideRight .assocGroupFilter").hide();
     
     // clear selection in ls_doc_list_lsDoc
     $("#ls_doc_list_lsDoc").val("");
     
     // and show tree2SelectorDiv
     $("#tree2SelectorDiv").show();
+    
+    // reset instructions
+    $("#tree2InitialInstructions").show();
+    $("#tree2SectionCopyInstructions").hide();
+    $("#tree2SectionRelationshipInstructions").hide();
 };
 
 // Render tree2 to copy items or create associations
@@ -650,14 +745,15 @@ app.isDocNode = function(n) {
 
 // Given an lsItemId, return the corresponding ft node
 app.getNodeFromLsItemId = function(lsItemId, tree) {
-    if (tree == "tree2") app.ft2;
-    else tree = app.ft;
-
-    if (lsItemId == null) {
-        return tree.fancytree("getTree").getNodeByKey("doc-" + app.lsDocId);
+    var key;
+    if (tree == "tree2") {
+        tree = app.ft2;
+        key = app.keyFromLsItemId(lsItemId, app.selectedAssocGroupTree2);
     } else {
-        return tree.fancytree("getTree").getNodeByKey(lsItemId+"");
+        tree = app.ft;
+        key = app.keyFromLsItemId(lsItemId, app.selectedAssocGroup);
     }
+    return tree.fancytree("getTree").getNodeByKey(key);
 };
 
 // Given a node, return the lsItemId as derived from the key -- or null if it's the doc node
@@ -665,8 +761,35 @@ app.lsItemIdFromNode = function(n) {
     if (typeof(n) != "object" || app.isDocNode(n)) {
         return null;
     } else {
-        return n.key;
+        return app.lsItemIdFromKey(n.key);
     }
+};
+
+app.lsItemIdFromKey = function(key) {
+    // if key isn't a number, it's the document, so return null
+    if (isNaN(key*1)) {
+        return null;
+    } else {
+        // else return Math.floor of the key, to remove any assocGroup if there
+        return Math.floor(key);
+    }
+};
+
+app.keyFromLsItemId = function(lsItemId, assocGroup) {
+    var key = lsItemId;
+    // if lsItemId is null, we're look for the document node
+    if (key == null) {
+        key = "doc-" + app.lsDocId;
+    
+    // else we're looking for an item node...
+    } else {
+        // if assocGroup is set, the key should have ".x" on the end for the assocGroup
+        if (assocGroup != "default" && assocGroup != null) {
+            key += "." + assocGroup;
+        }
+        // (note that for the default group, keys are written as, e.g., 1234.0, but they get converted to "1234")
+    }
+    return key + "";
 };
 
 // Given a node, return the title html we want to show for the node
@@ -740,14 +863,12 @@ app.tree1Activate = function(n) {
     // if this item is already showing, return now (after making sure the item details, rather than tree2, is showing)
     if (lsItemId == app.lsItemId) return;
 
-    // replace app.lsItemId
+    // replace app.lsItemId and push history state
     app.lsItemId = lsItemId;
+    app.pushHistoryState(app.lsItemId, app.selectedAssocGroup);
 
     // if this is the lsDoc node
     if (app.lsItemId == null) {
-        // replace url
-        app.pushHistoryState(app.lsItemId, app.path.lsDoc.replace('ID', app.lsDocId));
-
         // show documentInfo and hide all itemInfos
         $(".itemInfo").hide();
         $("#documentInfo").show();
@@ -757,9 +878,6 @@ app.tree1Activate = function(n) {
 
         // else it's an lsItem
     } else {
-        // replace url
-        app.pushHistoryState(app.lsItemId, app.path.lsItem.replace('ID', app.lsItemId));
-
         // hide documentInfo and all itemInfos
         $(".itemInfo").hide();
         $("#documentInfo").hide();
@@ -802,56 +920,75 @@ app.reorderItems = function(draggedNode, droppedNode, hitMode) {
 };
 
 app.saveItemOrder = function(node, originalParent) {
-    // update the listEnum fields for the node's (possibly new) parent's children
-    // (the former parent's children will still be in order, though we might want to "clean up" those listEnums too)
+    // update the sequenceNumber fields for the node's (possibly new) parent's children
+    // (the former parent's children will still be in order, though we might want to "clean up" those sequenceNumbers too)
     var siblings = node.parent.children;
     var lsItems = {};
     for (var i = 0; i < siblings.length; ++i) {
         var key = siblings[i].key;
 
-        // update listEnum if changed
-        if (key.lastIndexOf('__', 0) !== 0 && (siblings[i].data == null || siblings[i].data.listEnum != (i+1))) {
-            lsItems[key] = {
-                "listEnumInSource": (i + 1)
+		// skip siblings that aren't in the current assocGroup
+		if (!app.assocGroupsMatch(siblings[i].data.assoc.group, app.selectedAssocGroup)) {
+			continue;
+		}
+
+        var lsItemId = app.lsItemIdFromKey(key);
+        lsItems[lsItemId] = {"originalKey": key};
+        
+		// if we have an assocGroup other than default selected, add that
+		if (app.selectedAssocGroup != "default") {
+			lsItems[lsItemId].assocGroup = app.selectedAssocGroup;
+		}
+		
+        // if we got to the dragged node and (the parent changed OR this is a just-created item, which doesn't have an assoc.id)...
+        if (key == node.key && (node.parent != originalParent || node.data.assoc.id == null)) {
+			// delete the old childOf relationship for the dragged node
+			lsItems[lsItemId].deleteChildOf = {
+				"assocId": siblings[i].data.assoc.id
+			};
+			if (lsItems[lsItemId].deleteChildOf.assocId == null) {
+				lsItems[lsItemId].deleteChildOf.assocId = "all";
+			}
+			
+			// then create a new childOf relationship
+			lsItems[lsItemId].newChildOf = {
+				"sequenceNumber": (i + 1)
+			};
+
+			// if parent is the document...
+			if (node.parent.key.search(/^doc-(.+)/) > -1) {
+				// note the docId, and the fact that it's a document
+				lsItems[lsItemId].newChildOf.parentId = RegExp.$1;
+				lsItems[lsItemId].newChildOf.parentType = "doc";
+
+			// otherwise the parent is an item
+			} else {
+				lsItems[lsItemId].newChildOf.parentId = app.lsItemIdFromKey(node.parent.key);
+				lsItems[lsItemId].newChildOf.parentType = "item";
+			}
+
+			// also, in this case we should update sequenceNumber's for the original parent, in case we took the node out
+			if (originalParent.children != null && originalParent.children.length > 0) {
+				for (var j = 0; j < originalParent.children.length; ++j) {
+					var lsItemIdX = app.lsItemIdFromKey(originalParent.children[j].key);
+					// skip lsItemId and siblings that aren't in the current assocGroup
+					if (lsItemIdX == lsItemId || !app.assocGroupsMatch(originalParent.children[j].data.assoc.group, app.selectedAssocGroup)) {
+						continue;
+					}
+					lsItems[lsItemIdX] = {"originalKey": originalParent.children[j].key};
+					lsItems[lsItemIdX].updateChildOf = {
+						"assocId": originalParent.children[j].data.assoc.id,
+						"sequenceNumber": (j + 1)
+					};
+				}
+			}
+
+		// else parent hasn't changed, so just update the sequenceNumber
+        } else {
+        	lsItems[lsItemId].updateChildOf = {
+                "assocId": siblings[i].data.assoc.id,
+                "sequenceNumber": (i + 1)
             };
-
-            // update field value in display
-            app.getLsItemDetailsJq(key).find("[data-field-name=listEnumInSource]").text(i + 1);
-        }
-
-        // if we got to the node...
-        if (key == node.key) {
-            // ...then if the parent changed...
-            if (node.parent != originalParent) {
-                // we have to update the parent of the dragged node.
-
-                if (lsItems[key] == null) lsItems[key] = {};
-
-                // if parent is the document...
-                if (node.parent.key.search(/^doc-(.+)/) > -1) {
-                    // note the docId, and the fact that it's a document
-                    lsItems[key].parentId = RegExp.$1;
-                    lsItems[key].parentType = "doc";
-                    // otherwise the parent is an item
-                } else {
-                    lsItems[key].parentId = node.parent.key;
-                    lsItems[key].parentType = "item";
-                }
-
-                // also, in this case we should update listEnum's for the original parent, since we took the node out
-                if (originalParent.children != null && originalParent.children.length > 0) {
-                    for (var j = 0; j < originalParent.children.length; ++j) {
-                        if (originalParent.children[j].data == null || originalParent.children[j].data.listEnum != (j+1)) {
-                            var key = originalParent.children[j].key;
-                            lsItems[key] = {
-                                "listEnumInSource": (j+1)
-                            };
-                            // update field value in display
-                            app.getLsItemDetailsJq(key).find("[data-field-name=listEnumInSource]").text(j+1);
-                        }
-                    }
-                }
-            }
         }
     }
 
@@ -863,12 +1000,54 @@ app.saveItemOrder = function(node, originalParent) {
         data: {"lsItems": lsItems}
     }).done(function(data, textStatus, jqXHR){
         app.hideModalSpinner();
+        app.updateItemsAjaxDone(data);
+        
     }).fail(function(jqXHR, textStatus, errorThrown){
         app.hideModalSpinner();
         alert("An error occurred.");
     });
 };
 
+app.updateItemsAjaxDone = function(data) {
+	for (var i = 0; i < data.length; ++i) {
+		var o = data[i];
+		var n = app.ft.fancytree("getTree").getNodeByKey(o.originalKey+'');
+		if (n == null) {
+			console.log("couldn't get node for " + o.originalKey);
+		} else {
+			// update key if we got back an lsItemId
+			if (o.lsItemId != null) {
+				n.key = app.keyFromLsItemId(o.lsItemId, app.selectedAssocGroup);
+				console.log("updating key: " + o.lsItemId + " / " + n.key);
+			}
+			
+			// update fullStatement if we got it back
+			if (o.fullStatement != null) {
+				n.data.fullStmt = o.fullStatement;
+				n.title = null;
+			    n.setTitle(app.titleFromNode(n));
+			}
+			
+			// update association data if we got back a sequenceNumber
+			if (o.sequenceNumber != null) {
+				if (n.data.assoc == null) {
+					n.data.assoc = {};
+				}
+				n.data.assoc.group = app.selectedAssocGroup;
+				n.data.assoc.sequenceNumber = o.sequenceNumber;
+				if (o.assocId != null) {
+					n.data.assoc.id = o.assocId;
+				}
+			}
+			
+			// re-render node
+			n.render();
+		}
+	}
+	
+	// remove stray tooltips
+	$(".tooltip").remove();
+}
 
 //////////////////////////////////////////////////////
 // COPY AN ITEM FROM TREE2 TO TREE1
@@ -902,7 +1081,7 @@ app.copyItemInitiate = function() {
 
 app.copyItem = function(draggedNode, droppedNode, hitMode) {
     var copiedLsItemId = app.lsItemIdFromNode(draggedNode);
-
+    
     draggedNode.copyTo(droppedNode, hitMode, function(n) {
         // temporarily set key to "copiedItem"
         n.key = "copiedItem";
@@ -915,42 +1094,91 @@ app.copyItem = function(draggedNode, droppedNode, hitMode) {
         droppedNode.render();
 
         // construct ajax call to insert the new item and reorder its siblings
-        var newNode = app.getNodeFromLsItemId("copiedItem");
+        var newNode = app.ft.fancytree("getTree").getNodeByKey("copiedItem");
         var siblings = newNode.parent.children;
         var lsItems = {};
         for (var i = 0; i < siblings.length; ++i) {
             var key = siblings[i].key;
 
-            // update listEnum if changed
-            if (key.lastIndexOf('__', 0) !== 0 && (siblings[i].data == null || siblings[i].data.listEnum != (i+1))) {
-                lsItems[key] = {
-                    "listEnumInSource": (i+1)
-                };
-                // update field value in display
-                app.getLsItemDetailsJq(key).find("[data-field-name=listEnumInSource]").text(i+1);
+            // skip siblings that aren't in the current assocGroup
+            if (key != newNode.key && !app.assocGroupsMatch(siblings[i].data.assoc.group, app.selectedAssocGroup)) {
+                continue;
             }
 
             // if we got to the new node...
             if (key == newNode.key) {
-                if (lsItems[key] == null) lsItems[key] = {};
+            	lsItems[key] = {"originalKey": key};
+            	
+                // if we have an assocGroup other than default selected, add that
+                if (app.selectedAssocGroup != "default") {
+                    lsItems[key].assocGroup = app.selectedAssocGroup;
+                }
 
-                // set copyFromId flag so that updateItemAction will copy the item
-                lsItems[key].copyFromId = copiedLsItemId;
+                // if we're copying from the same document...
+                if (app.lsDocId == app.lsDoc2Id) {
+    		        // If the *same* assocGroup is chosen on both sides, always create a new instance of the item
+    		        if (app.selectedAssocGroup == app.selectedAssocGroupTree2) {
+                        // set copyFromId flag so that updateItemAction will copy the item
+                        lsItems[key].copyFromId = copiedLsItemId;
+                        lsItems[key].addCopyToTitle = "true";
+
+                    // else *different* assocGroups are chosen on both sides, so:
+    		        } else {
+			            // If the item already has an isChildOf association for this assocGroup, create a new instance of the item
+			            var copiedKey = app.keyFromLsItemId(copiedLsItemId, app.selectedAssocGroup);
+			            console.log("copying " + copiedKey);
+			            if (app.ft.fancytree("getTree").getNodeByKey(copiedKey) != null) {
+                            // set copyFromId flag so that updateItemAction will copy the item
+                            lsItems[key].copyFromId = copiedLsItemId;
+	                        lsItems[key].addCopyToTitle = "true";
+			            
+			            // Else the item does not have an isChildOf association for this assocGroup,
+			            // so create a new isChildOf relationship for the assocGroup, but do *not* create a new instance the item.
+			            } else {
+			                console.log("item doesn't exist");
+                            // send an lsItems array item with copiedLsItemId
+                            lsItems[copiedLsItemId] = lsItems[key];
+                            delete lsItems[key];
+                            key = copiedLsItemId;
+			            }
+			        }
+
+                // else different documents
+                } else {
+                    // set copyFromId flag so that updateItemAction will copy the item
+                    lsItems[key].copyFromId = copiedLsItemId;
+                }
+
+				// create a new childOf relationship regardless of whether or not we're actually creating a copy
+				lsItems[key].newChildOf = {
+					"sequenceNumber": (i + 1)
+				};
 
                 // set parentId and parentType
                 // if parent is the document...
                 if (newNode.parent.key.search(/^doc-(.+)/) > -1) {
                     // note the docId, and the fact that it's a document
-                    lsItems[key].parentId = RegExp.$1;
-                    lsItems[key].parentType = "doc";
+                    lsItems[key].newChildOf.parentId = RegExp.$1;
+                    lsItems[key].newChildOf.parentType = "doc";
                     // otherwise the parent is an item
                 } else {
-                    lsItems[key].parentId = newNode.parent.key;
-                    lsItems[key].parentType = "item";
+                    lsItems[key].newChildOf.parentId = app.lsItemIdFromKey(newNode.parent.key);
+                    lsItems[key].newChildOf.parentType = "item";
                 }
+            
+            // else it's a sibling of the new item, so just update the sequenceNumber
+            } else {
+				var lsItemId = app.lsItemIdFromKey(key);
+				lsItems[lsItemId] = {"originalKey": key};
+				lsItems[lsItemId].updateChildOf = {
+					"assocId": siblings[i].data.assoc.id,
+					"sequenceNumber": (i + 1)
+				};
             }
         }
-
+        
+        // console.log(lsItems);
+        
         // ajax call to submit changes
         app.showModalSpinner("Copying Item(s)");
         $.ajax({
@@ -960,20 +1188,7 @@ app.copyItem = function(draggedNode, droppedNode, hitMode) {
         }).done(function(data, textStatus, jqXHR){
             // hide spinner
             app.hideModalSpinner();
-
-            // returned data will be a tree with the items            
-            // update keys in newNode and descendants
-            var fixTree = function(node, o) {
-                node.key = o.itemId+"";
-                if (o.children != null && node.children != null) {
-                    for (var i = 0; i < o.children.length; ++i) {
-                        if (node.children[i] != null) {
-                            fixTree(node.children[i], o.children[i]);
-                        }
-                    }
-                }
-            }
-            fixTree(newNode, data[copiedLsItemId]);
+	        app.updateItemsAjaxDone(data);
 
             // re-render
             newNode.render();
@@ -1053,20 +1268,33 @@ app.toggleFolders = function(itemIds, val) {
             node.folder = val;
         }
         node.render();
+        
+        var src;
+        if (node.folder) src = "/assets/img/folder.png";
+        else src = "/assets/img/item.png";
+		$("[data-item-lsitemid=" + itemIds[i] + "] .itemTitleIcon").attr("src", src);
     }
     
     app.toggleItemCreationButtons();
 };
 
 app.getAddNewChildPath = function() {
+    var path;
     // if we don't have an lsItemId, we're showing/editing the doc
     if (app.lsItemId == null) {
-        return app.path.lsitem_new.replace('DOC', app.lsDocId);
+        path = app.path.lsitem_new.replace('DOC', app.lsDocId);
 
         // else we're showing/editing an item
     } else {
-        return app.path.lsitem_new.replace('DOC', app.lsDocId).replace('PARENT', app.lsItemId);
+        path = app.path.lsitem_new.replace('DOC', app.lsDocId).replace('PARENT', app.lsItemId);
     }
+    
+    // if we have an assocGroup other than default selected, add that to the path
+    if (app.selectedAssocGroup != "default") {
+        path += "/" + app.selectedAssocGroup;
+    }
+    
+    return path;
 };
 
 app.prepareAddNewChildModal = function() {
@@ -1100,7 +1328,7 @@ app.prepareAddNewChildModal = function() {
             // on successful add, add the item to the tree
             // returned data will be the path for the new item, which gives us the id
             var newChildData = {
-                "key": data.replace(/.*\/(.*)$/, "$1"),
+                "key": app.keyFromLsItemId(data.replace(/.*\/(.*)$/, "$1"), app.selectedAssocGroup),
                 "fullStmt": $("#ls_item_fullStatement").val(),
                 "humanCoding": $("#ls_item_humanCodingScheme").val(),
                 "abbrStmt": $("#ls_item_abbreviatedStatement").val(),
@@ -1128,6 +1356,13 @@ app.prepareAddNewChildModal = function() {
 app.addNewChild = function(data) {
     // construct the title
     data.title = app.titleFromNode(data);
+    
+    // add assoc
+    if (app.selectedAssocGroup != "default") {
+        data.assoc = {"group": app.selectedAssocGroup};
+    } else {
+        data.assoc = {"group": ""};
+    }
 
     // get the parentNode (current item) and add the child to the parent
     var parentNode = app.getNodeFromLsItemId(app.lsItemId);
@@ -1140,7 +1375,7 @@ app.addNewChild = function(data) {
     }
 
     // enable the tooltip on the new child
-    var newNode = app.getNodeFromLsItemId(data.key);
+    var newNode = app.getNodeFromLsItemId(app.lsItemIdFromKey(data.key));
     app.treeItemTooltip(newNode);
 
     // and now we have to saveItemOrder
@@ -1220,7 +1455,7 @@ app.prepareEditItemModal = function() {
             data: $editItemModal.find('form[name=ls_item]').serialize()
         }).done(function(data, textStatus, jqXHR){
             app.hideModalSpinner();
-            // on successful add, update the item to the tree
+            // on successful edot, update the item to the tree
             var updatedData = {
                 "fullStmt": $("#ls_item_fullStatement").val(),
                 "humanCoding": $("#ls_item_humanCodingScheme").val(),
@@ -1272,6 +1507,11 @@ app.prepareAssociateModal = function() {
         var path = app.path.lsassociation_tree_new;
         path = path.replace('ORIGIN_ID', app.lsItemIdFromNode(app.createAssociationNodes.droppedNode));
         path = path.replace('DESTINATION_ID', app.lsItemIdFromNode(app.createAssociationNodes.draggedNodes[0]));
+        
+        // if we have an assocGroup other than default selected, add that to the path
+        if (app.selectedAssocGroup != "default") {
+            path += "/" + app.selectedAssocGroup;
+        }
 
         $('#associateModal').find('.modal-body').load(
             path,
@@ -1341,6 +1581,11 @@ app.createAssociationRun = function() {
         // the "destination" refers to the node that's being associated with the origin node -- so this is the draggedNode
         path = path.replace('ORIGIN_ID', app.lsItemIdFromNode(app.createAssociationNodes.droppedNode));
         path = path.replace('DESTINATION_ID', app.lsItemIdFromNode(app.createAssociationNodes.draggedNodes[i]));
+
+        // if we have an assocGroup other than default selected, add that to the path
+        if (app.selectedAssocGroup != "default") {
+            path += "/" + app.selectedAssocGroup;
+        }
 
         $.ajax({
             url: path,
@@ -1477,22 +1722,62 @@ app.deleteItems = function(itemIds) {
                     parentNode.render();
                 }
 
-                $.ajax({
-                    // for now at least, we always send "1" in for the "CHILDREN" parameter
-                    url: app.path.lsitem_tree_delete.replace('ID', itemIds[i]).replace('CHILDREN', 1),
-                    method: 'POST'
-                }).done(function (data, textStatus, jqXHR) {
-                    // if we're done hide the spinner
-                    ++completed;
-                    console.log("completed: " + completed);
-                    if (completed == itemIds.length) {
-                        app.hideModalSpinner();
-                    }
-                
-                }).fail(function (jqXHR, textStatus, errorThrown) {
-                    alert("An error occurred.");
-                    // console.log(jqXHR.responseText);
-                });
+            	// if the item exists in a different assocGroup, only delete the association, not the item
+            	var itemExistsInAnotherGroup = false;
+            	var lsItems = null;
+				for (var assocGroupId in app.allAssocGroups) {
+					if (app.ft.fancytree("getTree").getNodeByKey(app.keyFromLsItemId(itemIds[i], assocGroupId)) != null) {
+						itemExistsInAnotherGroup = true;
+						lsItems = {};
+						lsItems[itemIds[i]] = {
+							"originalKey": node.key,
+							"deleteChildOf": {
+								"assocId": node.data.assoc.id
+							}
+						};
+						break;
+					}
+				}
+				
+				// if item exists in another group, use update_items service to delete association
+				if (itemExistsInAnotherGroup) {
+					$.ajax({
+						url: app.path.doctree_update_items.replace('ID', app.lsDocId),
+						method: 'POST',
+						data: {"lsItems": lsItems}
+					}).done(function (data, textStatus, jqXHR) {
+						// if we're done hide the spinner
+						++completed;
+						console.log("completed: " + completed);
+						if (completed == itemIds.length) {
+							app.hideModalSpinner();
+						}
+				
+					}).fail(function (jqXHR, textStatus, errorThrown) {
+						alert("An error occurred.");
+						// console.log(jqXHR.responseText);
+					});
+					
+					
+				// else use delete service to delete item
+				} else {
+					$.ajax({
+						// for now at least, we always send "1" in for the "CHILDREN" parameter
+						url: app.path.lsitem_tree_delete.replace('ID', itemIds[i]).replace('CHILDREN', 1),
+						method: 'POST'
+					}).done(function (data, textStatus, jqXHR) {
+						// if we're done hide the spinner
+						++completed;
+						console.log("completed: " + completed);
+						if (completed == itemIds.length) {
+							app.hideModalSpinner();
+						}
+				
+					}).fail(function (jqXHR, textStatus, errorThrown) {
+						alert("An error occurred.");
+						// console.log(jqXHR.responseText);
+					});
+				}
             } else {
                 ++completed;
             }
@@ -1567,33 +1852,340 @@ app.filterOnTrees = function() {
 /////////////////////////////////////////////////////
 // TAXONOMIES (ASSOCIATION GROUPS)
 
-app.initializeAssocGroupManager = function() {
+app.initializeAssocGroups = function() {
+    app.initializeManageAssocGroupButtons();
+    
+    // change event on assocGroup menus
+    $("#treeSideLeft .assocGroupSelect").off().on('change', function() { app.processAssocGroups('tree1', this); });
+    $("#treeSideRight .assocGroupSelect").off().on('change', function() { app.processAssocGroups('tree2', this); });
+    
+    // if we got an initialAssocGroup, set app.selectedAssocGroup
+    if (app.initialAssocGroup != null) {
+        app.selectedAssocGroup = app.initialAssocGroup;
+
+    // else get assocGroup from currently-loaded item
+    } else {
+        app.selectedAssocGroup = app.getNodeFromLsItemId(app.lsItemId).data.assoc.group;
+        // if it's "all", the document is loaded, so use default
+        if (app.selectedAssocGroup == "all" || app.selectedAssocGroup == null || app.selectedAssocGroup == "") app.selectedAssocGroup = "default";
+    }
+    
+    // process association groups for tree1
+    app.processAssocGroups('tree1');
+}
+
+app.initializeManageAssocGroupButtons = function() {
     // initialize buttons in association group modal
     $(".assocgroup-edit-btn").off('click').on('click', function() { app.assocGroupEdit(this); });
     $(".assocgroup-delete-btn").off('click').on('click', function() { app.assocGroupDelete(this); });
-    $(".assocgroup-add-btn").off('click').on('click', function() { app.assocGroupAdd(); });
-    
-    // show tree1AssocGroups if we have any association groups (other than default) to show
-    // PW: disabling this for now
-    if (false && $("#assocGroupSelect option").length > 1) {
-        $("#tree1AssocGroups").show();
-        $("#assocGroupSelect").off().on('change', function() { app.assocGroupSelected('tree1', this); });
-    }
 }
 
-app.assocGroupAdd = function() {
-    
+app.assocGroupsMatch = function(ag1, ag2) {
+    // null, "default", and "all" are all the same thing
+    if (ag1 == null || ag1 == "" || ag1 == "default" || ag1 == "all") ag1 = "default";
+    if (ag2 == null || ag2 == "" || ag2 == "default" || ag2 == "all") ag2 = "default";
+    return (ag1 == ag2);
 }
 
 app.assocGroupEdit = function(btn) {
+	// get assocGroup to delete
+	var assocGroupId = $(btn).closest("[data-assocgroupid]").attr("data-assocgroupid");
+	console.log(assocGroupId);
 
+	// hide the manage modal
+	$("#manageAssocGroupsModal").modal('hide');
+	
+    var $editAssocGroupModal = $('#editAssocGroupModal');
+    $editAssocGroupModal.find('.modal-body').html(app.spinnerHtml("Loading Form"));
+    $editAssocGroupModal.modal('show').on('shown.bs.modal', function(e){
+        $('#editAssocGroupModal').find('.modal-body').load(
+            app.path.lsdef_association_grouping_edit.replace('ID', assocGroupId),
+            null,
+            function(responseText, textStatus, jqXHR) {
+            	// select this document from the document select menu, then hide the menu
+            	$("#ls_def_association_grouping_lsDoc").val(app.lsDocId);
+            	$("#ls_def_association_grouping_lsDoc").closest(".form-group").hide();
+            }
+        )
+    }).on('hidden.bs.modal', function(e){
+        $('#editAssocGroupModal').find('.modal-body').html(app.spinnerHtml("Loading Form"));
+    });
+    $editAssocGroupModal.find('.btn-save').off().on('click', function(e){
+        app.showModalSpinner("Updating Group");
+        $.ajax({
+            url: app.path.lsdef_association_grouping_edit.replace('ID', assocGroupId),
+            method: 'POST',
+            data: $editAssocGroupModal.find('form[name=ls_def_association_grouping]').serialize()
+        }).done(function(data, textStatus, jqXHR){
+            app.hideModalSpinner();
+            // on successful edit, update the item...
+            var title = $("#ls_def_association_grouping_title").val();
+            var description = $("#ls_def_association_grouping_description").val();
+            if (description == "") description = "—";
+            
+            // in the modal
+            var $tr = $("tr[data-assocgroupid=" + assocGroupId + "]");
+            $tr.find("td").first().html(title);
+            $tr.find(".assocgroup-description").html(description);
+			
+			// in the allAssocGroups array
+            app.allAssocGroups[assocGroupId] = {
+            	"id": assocGroupId,
+            	"title": title,
+            	"lsDocId": app.lsDocId
+            };
+            
+            // and in the select menu
+            $("#treeSideLeft .assocGroupSelect option[value=" + assocGroupId + "]").html(title);
+			
+			// hide assoc group edit modal; show manage modal
+            $editAssocGroupModal.modal('hide');
+			$("#manageAssocGroupsModal").modal('show');
+
+        }).fail(function(jqXHR, textStatus, errorThrown){
+            app.hideModalSpinner();
+            $editAssocGroupModal.find('.modal-body').html(jqXHR.responseText);
+        });
+    });
+
+    // if you cancel the edit assoc group modal, re-open the manage modal
+    $editAssocGroupModal.find('.modal-footer .btn-default').on('click', function(e) {
+		$("#manageAssocGroupsModal").modal('show');
+    });
 }
 
 app.assocGroupDelete = function(btn) {
+	// get assocGroup to delete
+	var assocGroupId = $(btn).closest("[data-assocgroupid]").attr("data-assocgroupid");
+	
+	// hide the manage modal
+	$("#manageAssocGroupsModal").modal('hide');
+	
+	// show confirmation modal
+    $("#deleteAssocGroupModal").modal()
+    .one('click', '.btn-delete', function() {
+        $(this).closest('.modal').modal('hide');
 
+        // show "Deleting" spinner
+        app.showModalSpinner("Deleting");
+
+		$.ajax({
+			url: app.path.lsdef_association_grouping_tree_delete.replace('ID', assocGroupId),
+			method: 'POST'
+		}).done(function (data, textStatus, jqXHR) {
+			// hide the spinner
+			app.hideModalSpinner();
+			// remove from the allAssocGroups array
+            delete app.allAssocGroups[assocGroupId];
+
+            // $("#treeSideLeft .assocGroupSelect option[value=" + assocGroupId + "]").remove();
+            app.processAssocGroups("tree1");
+			
+			// remove from the manage modal, then reshow it
+			$("tr[data-assocgroupid=" + assocGroupId + "]").remove();
+			// re-show the manage modal
+            $("#manageAssocGroupsModal").modal('show');
+	
+		}).fail(function (jqXHR, textStatus, errorThrown) {
+			alert("An error occurred.");
+			// console.log(jqXHR.responseText);
+		});
+    });
 }
 
-app.assocGroupSelected = function(tree, menu) {
-    var assocGroupId = $(menu).val();
-    console.log(assocGroupId);
+app.processAssocGroups = function(tree, menu) {
+    var assocGroup, $treeSide, ft;
+    var includedAssocGroups = [];
+    var showMenu = false;
+
+    // if menu provided, get assocGroup from it
+    if (menu != null) {
+        assocGroup = $(menu).val();
+    }
+    
+    // for left-side tree...
+    if (tree == "tree1" || tree == "viewmode_tree") {
+        // if no menu passed in, use current selectedAssocGroup
+        if (assocGroup == null || assocGroup == "") {
+            assocGroup = app.selectedAssocGroup;
+        // else set app.selectedAssocGroup
+        } else {
+            app.selectedAssocGroup = assocGroup;
+        }
+
+        // if the currently-showing item isn't part of this group, select the document in the tree
+        var n = app.getNodeFromLsItemId(app.lsItemId);
+        if (n == null || !app.assocGroupsMatch(n.data.assoc.group, app.selectedAssocGroup)) {
+            app.getNodeFromLsItemId(null, "tree1").setActive();
+        }
+        
+        // if we're processing tree1, all assocGroups listed as belonging to that document should be shown,
+        // even if there aren't any items associated with the group
+        for (var assocGroupId in app.allAssocGroups) {
+            if (app.allAssocGroups[assocGroupId].lsDocId == app.lsDocId) {
+                includedAssocGroups.push(assocGroupId + "");
+                showMenu = true;
+            }
+        }
+        
+        $treeSide = $("#treeSideLeft");
+        ft = app.ft;
+        
+        // if item was selected from the menu, push a history state
+        if (menu != null) {
+            app.pushHistoryState(app.lsItemId, app.selectedAssocGroup);
+        }
+    
+    // else right-side tree...
+    } else {
+        // if no menu passed in, use current selectedAssocGroupTree2
+        if (assocGroup == null || assocGroup == "") {
+            assocGroup = app.selectedAssocGroupTree2;
+        }
+        // and if we still don't have a value, use default
+        if (assocGroup == null || assocGroup == "") {
+            assocGroup = "default";
+        }
+        app.selectedAssocGroupTree2 = assocGroup;
+        
+        $treeSide = $("#treeSideRight")
+        ft = app.ft2;
+    }
+    
+    // everything is going to be unselected here, so deselect treeCheckboxControl
+    $treeSide.find(".treeCheckboxControl").prop("checked", false);
+    
+    // hide all items in the tree that don't match the given assocGroup
+    // and construct a list of assocGroups used
+    function processChildren(parent) {
+        // make sure parent isn't selected (so that if you had things selected via checkboxes and then used the menu to change groups,
+        // those selections would be cleared)
+        parent.setSelected(false);
+        
+        if (parent.data.assoc.group != "all") {
+        	var pag = parent.data.assoc.group + "";
+            // update includedAssocGroups list
+            if ($.inArray(pag, includedAssocGroups) == -1 && pag != "default") {
+                includedAssocGroups.push(pag);
+                showMenu = true;
+            }
+            
+            if (app.assocGroupsMatch(assocGroup, pag)) {
+                // matches assoc group, so show it
+                $(parent.li).show();
+                parent.data.assocGroupShowing = true;
+                //console.log("show " + parent.title);
+                
+            } else {
+                // doesn't match assoc group, so hide it
+                $(parent.li).hide();
+                parent.data.assocGroupShowing = false;
+                //console.log("hide " + parent.title);
+            }
+        }
+        
+        // now process children of parent
+        if ($.isArray(parent.children)) {
+            for (var i = 0; i < parent.children.length; ++i) {
+                processChildren(parent.children[i]);
+            }
+        }
+    }
+    processChildren(ft.fancytree("getTree").getFirstChild());
+    
+    // clear the assocGroup menu
+    $treeSide.find(".assocGroupSelect").html('');
+    
+    // if we should be showing the menu...
+    if (showMenu) {
+        $treeSide.find(".assocGroupSelect").append('<option value="default">– Default Group –</option>');
+        
+        for (var i = 0; i < includedAssocGroups.length; ++i) {
+            if (includedAssocGroups[i] == "") continue;
+            
+            var ag = app.allAssocGroups[includedAssocGroups[i]];
+            $treeSide.find(".assocGroupSelect").append('<option value="' + ag.id + '">' + ag.title + '</option>');
+        }
+        
+        // then show the menu
+        $treeSide.find(".assocGroupFilter").show();
+
+        // and select this assocGroup's menu item
+        $treeSide.find(".assocGroupSelect").val(assocGroup)
+
+    // else hide the menu
+    } else {
+        $treeSide.find(".assocGroupFilter").hide();
+    }
 }
+
+app.prepareAddAssocGroupModal = function() {
+    var $addAssocGroupModal = $('#addAssocGroupModal');
+    $addAssocGroupModal.find('.modal-body').html(app.spinnerHtml("Loading Form"));
+    $addAssocGroupModal.on('show.bs.modal', function(e){
+    	$("#manageAssocGroupsModal").modal('hide');
+    }).on('shown.bs.modal', function(e){
+        $('#addAssocGroupModal').find('.modal-body').load(
+            app.path.lsdef_association_grouping_new,
+            null,
+            function(responseText, textStatus, jqXHR) {
+            	// select this document from the document select menu, then hide the menu
+            	$("#ls_def_association_grouping_lsDoc").val(app.lsDocId);
+            	$("#ls_def_association_grouping_lsDoc").closest(".form-group").hide();
+            }
+        )
+    }).on('hidden.bs.modal', function(e){
+        $('#addAssocGroupModal').find('.modal-body').html(app.spinnerHtml("Loading Form"));
+    });
+    $addAssocGroupModal.find('.btn-save').on('click', function(e) {
+        app.showModalSpinner("Creating Item");
+        $.ajax({
+            url: app.path.lsdef_association_grouping_new,
+            method: 'POST',
+            data: $addAssocGroupModal.find('form[name=ls_def_association_grouping]').serialize()
+        }).done(function(data, textStatus, jqXHR) {
+            // returned data will be the new item id
+
+            app.hideModalSpinner();
+
+            // on successful add, add the item to the allAssocGroups list
+            var newAssocGroupId = data;
+            var title = $("#ls_def_association_grouping_title").val();
+            app.allAssocGroups[newAssocGroupId] = {
+            	"id": newAssocGroupId,
+            	"title": title,
+            	"lsDocId": app.lsDocId
+            };
+            
+            // and add it to the manage groups modal
+			var html = '<tr data-assocgroupid="' + newAssocGroupId + '">';
+			html += '<td>' + title + '</td>';
+			html += '<td>';
+			html += '<button class="assocgroup-edit-btn btn btn-default btn-xs pull-right">Edit</button>';
+			html += '<button class="assocgroup-delete-btn btn btn-default btn-xs pull-right" style="margin-right:5px">Delete</button>';
+			html += '<span class="assocgroup-description">' + $("#ls_def_association_grouping_description").val() + '</span>';
+			html += '</td>';
+			html += '</tr>';
+			$("#manageAssocGroupsModal tbody").append(html);
+			app.initializeManageAssocGroupButtons();
+			
+			// add it to the select menu
+            app.processAssocGroups("tree1");
+			// $("#treeSideLeft .assocGroupSelect").append('<option value="' + newAssocGroupId + '">' + title + '</option>');
+
+			// hide the add modal and show the manage modal
+            $addAssocGroupModal.modal('hide');
+            $("#manageAssocGroupsModal").modal('show');
+
+        }).fail(function(jqXHR, textStatus, errorThrown){
+            app.hideModalSpinner();
+            $addAssocGroupModal.find('.modal-body').html(jqXHR.responseText);
+        });
+    });
+    
+    // if you cancel the new assoc group modal, re-open the manage modal
+    $addAssocGroupModal.find('.modal-footer .btn-default').on('click', function(e) {
+		$("#manageAssocGroupsModal").modal('show');
+    });
+};
+
