@@ -58,7 +58,7 @@ framework:
       formats:
         jsonapi: 'application/vnd.api+json'
         csv: ['text/csv', 'text/plain']
-    #translator: { fallbacks: ['%locale%'] }
+    translator: ~
     assets:
         version: '170481'
 
@@ -78,7 +78,8 @@ twig:
 assetic:
     debug:          "%kernel.debug%"
     use_controller: false
-    bundles:        [ ]
+    bundles:        ["FOSCommentBundle"]
+
     #java: /usr/bin/java
     filters:
         cssrewrite: ~
@@ -218,3 +219,13 @@ al_swagger_ui:
         resource_dir: "app/Resources/swagger-docs/"
         resource_list_filename: api-docs.json
     resource_list: al_swagger_ui_static_resource_list
+
+fos_comment:
+    db_driver: orm
+    class:
+        model:
+            comment: CftfBundle\Entity\Comment
+            thread: CftfBundle\Entity\Thread
+
+assetic:
+    bundles: [ "FOSCommentBundle" ]

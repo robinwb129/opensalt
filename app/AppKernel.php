@@ -25,7 +25,7 @@ class AppKernel extends Kernel
 
             new JMS\DiExtraBundle\JMSDiExtraBundle($this),
             new JMS\AopBundle\JMSAopBundle(),
-            new JMS\SerializerBundle\JMSSerializerBundle(),
+            new JMS\SerializerBundle\JMSSerializerBundle($this),
 
             new Tetranz\Select2EntityBundle\TetranzSelect2EntityBundle(),
 
@@ -43,6 +43,8 @@ class AppKernel extends Kernel
             new Salt\UserBundle\SaltUserBundle(),
             new GithubFilesBundle\GithubFilesBundle(),
             new Salt\SiteBundle\SaltSiteBundle(),
+            new FOS\RestBundle\FOSRestBundle(),
+            new FOS\CommentBundle\FOSCommentBundle(),
         ];
 
         if (in_array($this->getEnvironment(), array('dev', 'test'), true)) {

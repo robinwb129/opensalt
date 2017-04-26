@@ -31,6 +31,8 @@
                 {% endfor %}
                 </ul>
     </div>
+    {% include 'FOSCommentBundle:Thread:async.html.twig' with {'id': 'foo'} %}
+
     {% include 'CftfBundle:LsDoc:wizard.html.twig' %}
 {% endblock %}
 
