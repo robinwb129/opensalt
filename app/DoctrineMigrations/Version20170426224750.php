@@ -15,7 +15,21 @@ class Version20170426224750 extends AbstractMigration
      */
     public function up(Schema $schema)
     {
-        // this up() migration is auto-generated, please modify it to your needs
+        $this->abortIf($this->connection->getDatabasePlatform()->getName() !== 'mysql', 'Migration can only be executed safely on \'mysql\'.');
+
+        $this->addSql('DROP TABLE IF EXISTS comments;');
+        $this->addSql('
+            CREATE TABLE comments
+            (
+                comment_id INT(10) ,
+                body TEXT,
+                ancestors VARCHAR(250),
+                depth INT(10),
+                created_at DATETIME,
+                state INT(10),
+                thread_id VARCHAR(250)
+            ) DEFAULT CHARACTER SET utf8 COLLATE utf8_unicode_ci ENGINE = InnoDB
+        ');
 
     }
 
@@ -24,7 +38,6 @@ class Version20170426224750 extends AbstractMigration
      */
     public function down(Schema $schema)
     {
-        // this down() migration is auto-generated, please modify it to your needs
-
+        $this->addSql('DROP TABLE comments;');
     }
 }
