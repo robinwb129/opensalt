@@ -38,6 +38,15 @@ class LsItemRepository extends \Doctrine\ORM\EntityRepository
     }
 
     /**
+     * @param LsDoc $lsDoc
+     *
+     * @return LsItem
+     */
+    public function cloneToLsDoc(LsDoc $lsDoc, LsItem $oldLsItem)
+    {
+    }
+
+    /**
      * @param string $key
      *
      * @return array
